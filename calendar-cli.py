@@ -530,7 +530,7 @@ def calendar_agenda(caldav_conn, args):
             for timeattr in ('dtcreated', 'dtend'):
                 if hasattr(event['instance'], timeattr):
                     event[timeattr] = getattr(event['instance'], timeattr).value
-                    if hasattr(event[timeattr], 'strftime'):
+                    if hasattr(event[timeattr], 'strftime') and hasattr(event[timeattr], 'astimezone'):
                         event[timeattr] = event[timeattr].astimezone(_tz(args.timezone)).strftime(args.timestamp_format)
                 else:
                     event[timeattr] = '-'
