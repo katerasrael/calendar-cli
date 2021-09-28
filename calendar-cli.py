@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 """
-https://github.com/tobixen/calendar-cli/ - high-level cli against caldav servers.
+https://github.com/katerasrael/calendar-cli/ - high-level cli against caldav servers.
 
 Copyright (C) 2013-2020 Tobias Brox and other contributors.
 
@@ -390,11 +390,173 @@ def calendar_delete(caldav_conn, args):
     cal = find_calendar(caldav_conn, args)
     if args.event_uid:
         event = cal.event_by_uid(args.event_uid)
+        event.delete()
     elif args.event_url:
         event = cal.event_by_url(args.event_url)
+        event.delete()
+    elif args.from_time and args.to_time: ## delete events by time
+        search_dtstart = dateutil.parser.parse(args.from_time)
+        search_dtstart = _tz(args.timezone).localize(search_dtstart)
+
+        search_dtend = dateutil.parser.parse(args.to_time)
+        search_dtend = _tz(args.timezone).localize(search_dtend)
+        
+        ## get all events between the given dates
+        ## expand set to True 
+        ###         expands recurring events to several events
+        ## expand set to False 
+        ##          returns the first event including the RRULE-attribute in the VEVENT-instance
+        ##          single instances of the recurring event that have been moved to an other date/time are returned in a extra event
+        
+        events_ = find_calendar(caldav_conn, args).date_search(search_dtstart, search_dtend, expand=False)
+        events = []
+        
+        global_count = 0
+            
+        for event_cal in events_:
+            if hasattr(event_cal.instance, 'vtimezone'):
+                ## i'm not sure this is useful
+                tzinfo = event_cal.instance.vtimezone.gettzinfo()
+            else:
+                tzinfo = _tz(args.timezone)
+            events__ = event_cal.instance.components()
+            count = 0
+            rrule_delete = False
+            
+            for event in events__:
+                if event.name != 'VEVENT':
+                    continue
+                count = count + 1;
+                delete = True
+                recurrence_id = '-'
+                
+                dtstart = event.dtstart.value if hasattr(event, 'dtstart') else _now()
+                if not isinstance(dtstart, datetime):
+                    dtstart = datetime(dtstart.year, dtstart.month, dtstart.day)
+                if not dtstart.tzinfo:
+                    try:
+                        dtstart = tzinfo.localize(dtstart)
+                    except AttributeError:
+                        dtstart.astimezone(tzinfo)
+                ## convert into timezone given in args:
+                dtstart = dtstart.astimezone(_tz(args.timezone))
+
+                if hasattr(event, 'rrule'):   
+                ## recurring event
+                ## check, if it last after the end-date, then it will not be deleted
+                ## if it doesn't last longer than the end but starts before start it won't be deleted either
+                ##
+                ## ***|***   |      beforesearch != None
+                ##   *|******|*     aftersearch != None (and beforesearch != None, but stops in the first step)
+                ##    | ***  |      only this will be deleted
+                ##    |  ****|**    aftersearch != None
+                ##
+                    rrule_ = event.rrule.value
+
+                    ## workaround?
+                    ## check if rrule_ ends with a 'Z' (=UTC), otherwise append it
+                    if rrule_.find('UNTIL=') != -1 and rrule_[-1] != 'Z':
+                        s1 = rrule_.split("UNTIL=",1)[0]
+                        s2 = rrule_.split("UNTIL=",1)[1]
+                        if len(s2) == 8:
+                            rrule_ += 'T000000Z'
+                            
+                    nrrule_ = rrulestr(rrule_, dtstart=dtstart)
+    
+                    try:
+                        aftersearch = nrrule_.after(search_dtend)
+                    except TypeError: ## pesky problem with comparition of timestamps with and without tzinfo
+                        break
+
+                    if aftersearch:
+                    ## if there is a recurrence after the search_dtend date: don't put it on the delete-list
+                        if args.verbose:
+                            print("event has recurrences after search-date")
+                        delete = False
+                        rrule_delete = False
+                    else:
+                    ## no recurrence after end: check if it begins before start
+                        try:
+                            beforesearch = nrrule_.before(search_dtstart)
+                        except TypeError: ## pesky problem with comparition of timestamps with and without tzinfo
+                            break
+
+                        if beforesearch:
+                            if args.verbose:
+                                print("event has recurrences before search-date")
+                            delete = False
+                            rrule_delete = False
+                        else:
+                            if args.verbose:
+                                print("event has no recurrences before and after search-date")
+                            delete = True
+                            rrule_delete = True
+                            recurrence_id = 'RRULE' + rrule_
+
+##                        events.append({'global_count': global_count, 'dtstart': dtstart, 'instance': event})
+
+                if count > 1:
+                ## check if there are recurrences
+                ##
+                ## rrule-event and recurrence-events share the same uid
+                ##
+                ## if these recurrences are inbetween the search-dates but the original rrule-event lasts longer
+                ## the rrule-event gets deleted when a recurrence is deleted - we probably don't want this
+                    if hasattr(event, 'recurrence-id') and rrule_delete == False:
+                        delete = False
+
+                ## it's not a recurring event but found betweend the search-dates: put it on the list
+                if delete == True:
+                    if args.verbose:
+                        print(dtstart, "will be deleted")
+                    global_count = global_count + 1
+                    events.append({'global_count': global_count, 'dtstart': dtstart, 'instance': event, 'recurrence-id': recurrence_id})
+
+        ## changed to use the "key"-parameter at 2019-09-18, as needed for python3.
+        ## this will probably cause regression on sufficiently old versions of python
+        events.sort(key=lambda a: a['dtstart'])
+
+        for event in events:
+            event['summary'] = "(no description)"
+            event['dtstart'] = event['dtstart'].strftime(args.timestamp_format)
+            for timeattr in ('dtcreated', 'dtend'):
+                if hasattr(event['instance'], timeattr):
+                    event[timeattr] = getattr(event['instance'], timeattr).value
+                    if hasattr(event[timeattr], 'strftime') and hasattr(event[timeattr], 'astimezone'):
+                        event[timeattr] = event[timeattr].astimezone(_tz(args.timezone)).strftime(args.timestamp_format)
+                else:
+                    event[timeattr] = '-'
+            for textattr in vcal_txt_one:
+                if hasattr(event['instance'], textattr):
+                    event[textattr] = getattr(event['instance'], textattr).value
+                else:
+                    event[textattr] = '-'
+            for summary_attr in ('summary', 'location', 'description'):
+                if hasattr(event['instance'], summary_attr):
+                    event['summary'] = getattr(event['instance'], summary_attr).value
+                    break
+            event['uid'] = event['instance'].uid.value if hasattr(event['instance'], 'uid') else '<no uid>'
+
+            if hasattr(event['instance'], 'recurrence-id'):
+                event['recurrence-id'] = getattr(event['instance'], 'recurrence-id').value
+                event['recurrence-id'] = event['recurrence-id'].astimezone(_tz(args.timezone)).strftime(args.timestamp_format)
+            
+        print("The following", global_count, "events are deleteable:")
+        
+        for event in events:
+            print(args.event_template.format(**event))
+
+        if args.no_test:
+            for event in events:
+                print("Deleting", event['summary'])
+                del_event = cal.event_by_uid(event['uid'])
+                del_event.delete()
+
+
     else:
-        raise ValueError("Event deletion failed: either uid or url is needed")
-    event.delete()
+        raise ValueError("Event deletion failed: either uid or url or a combination of from-time and to-time is needed")
+            
+##    event.delete()
 
 def journal_add(caldav_conn, args):
     ## TODO: copied from todo_add, should probably be consolidated
@@ -951,8 +1113,14 @@ def main():
     calendar_agenda_parser.set_defaults(func=calendar_agenda)
 
     calendar_delete_parser = calendar_subparsers.add_parser('delete')
-    calendar_delete_parser.add_argument('--event-uid')
-    calendar_delete_parser.add_argument('--event-url')
+    calendar_delete_parser.add_argument('--verbose', help="Be verbose, print whole event", action='store_true', default=False)
+    calendar_delete_parser.add_argument('--no-test', help="No testing, do the job", action='store_true', default=False)
+    calendar_delete_parser.add_argument('--event-uid', help="Delete calendar event by uid")
+    calendar_delete_parser.add_argument('--event-url', help="Delete calendar event by url")
+    calendar_delete_parser.add_argument('--from-time', help="Delete calendar events from this timestamp. Must be given together with --to-time")
+    calendar_delete_parser.add_argument('--to-time', help="Delete calendar until this timestamp. Must be given together with --from-time")
+    calendar_delete_parser.add_argument('--event-template', help="Template for printing out the event. Defaults to '{dtstart} {summary}'", default="{dtstart} {summary}")
+    calendar_delete_parser.add_argument('--timestamp-format', help="strftime-style format string for the output timestamps", default="%Y-%m-%d %H:%M (%a)")
     calendar_delete_parser.set_defaults(func=calendar_delete)
 
     args = parser.parse_args(remaining_argv)
@@ -990,3 +1158,4 @@ Have you set up a config file? Read the doc or ...
 
 if __name__ == '__main__':
     main()
+
