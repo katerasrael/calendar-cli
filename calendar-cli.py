@@ -28,6 +28,8 @@ import re
 import urllib3
 from getpass import getpass
 from six import PY3
+import timeit
+
 
 def to_normal_str(text):
     if PY3 and text and not isinstance(text, str):
@@ -388,6 +390,7 @@ def calendar_add(caldav_conn, args):
 
 def calendar_delete(caldav_conn, args):
     cal = find_calendar(caldav_conn, args)
+
     if args.event_uid:
         event = cal.event_by_uid(args.event_uid)
         event.delete()
@@ -400,36 +403,38 @@ def calendar_delete(caldav_conn, args):
 
         search_dtend = dateutil.parser.parse(args.to_time)
         search_dtend = _tz(args.timezone).localize(search_dtend)
-        
+
         ## get all events between the given dates
-        ## expand set to True 
+        ## expand set to True
         ###         expands recurring events to several events
-        ## expand set to False 
+        ## expand set to False
         ##          returns the first event including the RRULE-attribute in the VEVENT-instance
         ##          single instances of the recurring event that have been moved to an other date/time are returned in a extra event
-        
+
         events_ = find_calendar(caldav_conn, args).date_search(search_dtstart, search_dtend, expand=False)
         events = []
-        
+
         global_count = 0
-            
+
         for event_cal in events_:
             if hasattr(event_cal.instance, 'vtimezone'):
                 ## i'm not sure this is useful
                 tzinfo = event_cal.instance.vtimezone.gettzinfo()
             else:
                 tzinfo = _tz(args.timezone)
+
             events__ = event_cal.instance.components()
+
             count = 0
             rrule_delete = False
-            
+
             for event in events__:
                 if event.name != 'VEVENT':
                     continue
                 count = count + 1;
                 delete = True
                 recurrence_id = '-'
-                
+
                 dtstart = event.dtstart.value if hasattr(event, 'dtstart') else _now()
                 if not isinstance(dtstart, datetime):
                     dtstart = datetime(dtstart.year, dtstart.month, dtstart.day)
@@ -441,7 +446,7 @@ def calendar_delete(caldav_conn, args):
                 ## convert into timezone given in args:
                 dtstart = dtstart.astimezone(_tz(args.timezone))
 
-                if hasattr(event, 'rrule'):   
+                if hasattr(event, 'rrule'):
                 ## recurring event
                 ## check, if it last after the end-date, then it will not be deleted
                 ## if it doesn't last longer than the end but starts before start it won't be deleted either
@@ -460,9 +465,9 @@ def calendar_delete(caldav_conn, args):
                         s2 = rrule_.split("UNTIL=",1)[1]
                         if len(s2) == 8:
                             rrule_ += 'T000000Z'
-                            
+
                     nrrule_ = rrulestr(rrule_, dtstart=dtstart)
-    
+
                     try:
                         aftersearch = nrrule_.after(search_dtend)
                     except TypeError: ## pesky problem with comparition of timestamps with and without tzinfo
@@ -493,8 +498,6 @@ def calendar_delete(caldav_conn, args):
                             rrule_delete = True
                             recurrence_id = 'RRULE' + rrule_
 
-##                        events.append({'global_count': global_count, 'dtstart': dtstart, 'instance': event})
-
                 if count > 1:
                 ## check if there are recurrences
                 ##
@@ -510,7 +513,7 @@ def calendar_delete(caldav_conn, args):
                     if args.verbose:
                         print(dtstart, "will be deleted")
                     global_count = global_count + 1
-                    events.append({'global_count': global_count, 'dtstart': dtstart, 'instance': event, 'recurrence-id': recurrence_id})
+                    events.append({'global_count': global_count, 'dtstart': dtstart, 'instance': event, 'recurrence-id': recurrence_id, 'event_cal': event_cal})
 
         ## changed to use the "key"-parameter at 2019-09-18, as needed for python3.
         ## this will probably cause regression on sufficiently old versions of python
@@ -540,22 +543,33 @@ def calendar_delete(caldav_conn, args):
             if hasattr(event['instance'], 'recurrence-id'):
                 event['recurrence-id'] = getattr(event['instance'], 'recurrence-id').value
                 event['recurrence-id'] = event['recurrence-id'].astimezone(_tz(args.timezone)).strftime(args.timestamp_format)
-            
+
         print("The following", global_count, "events are deleteable:")
-        
+
         for event in events:
             print(args.event_template.format(**event))
 
         if args.no_test:
-            for event in events:
-                print("Deleting", event['summary'])
-                del_event = cal.event_by_uid(event['uid'])
-                del_event.delete()
+            while ( res:=input("Do you want to save? (Enter y/n)").lower() ) not in {"y", "n"}: pass
 
+            if res=='y':
+                i = 0
+                for event in events:
+                    i += 1
+                    print("Deleting", i, "of", global_count, "-", event['dtstart'], event['summary'])
+                    del_event = event['event_cal']
+                    if args.verbose:
+                        start_time = timeit.default_timer()
+                    del_event.delete()
+                    if args.verbose:
+                        end_time = timeit.default_timer()
+                        print("Done. Time:", end_time - start_time)
+                    else:
+                        print("Done.")
 
     else:
         raise ValueError("Event deletion failed: either uid or url or a combination of from-time and to-time is needed")
-            
+
 ##    event.delete()
 
 def journal_add(caldav_conn, args):
