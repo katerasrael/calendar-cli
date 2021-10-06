@@ -550,7 +550,7 @@ def calendar_delete(caldav_conn, args):
             print(args.event_template.format(**event))
 
         if args.no_test:
-            while ( res:=input("Do you want to save? (Enter y/n)").lower() ) not in {"y", "n"}: pass
+            while ( res:=input("Do you want to delete? (Enter y/n)").lower() ) not in {"y", "n"}: pass
 
             if res=='y':
                 i = 0
