@@ -80,15 +80,15 @@ try:
 except NameError:
     unicode = str
 
-__version__ = "0.13.0"
-__author__ = "Andreas Bär"
-__author_short__ = "katerasrael"
-__copyright__ = "Copyright 2013-2021, Tobias Brox and contributors, 2022 Andreas Bär"
-__credits__ = "Tobias Brox (tobixen) for the original code"
+__version__ = "0.12.1"
+__author__ = "Tobias Brox"
+__author_short__ = "tobixen"
+__copyright__ = "Copyright 2013-2021, Tobias Brox and contributors"
+#__credits__ = []
 __license__ = "GPLv3+"
 __license_url__ = "http://www.gnu.org/licenses/gpl-3.0-standalone.html"
-__maintainer__ = "Andreas Bär"
-__author_email__ = "asbaer@asrael.franken.de"
+__maintainer__ = "Tobias Brox"
+__author_email__ = "t-calendar-cli@tobixen.no"
 __status__ = "Development"
 __product__ = "calendar-cli"
 __description__ = "high-level cli against caldav servers"
