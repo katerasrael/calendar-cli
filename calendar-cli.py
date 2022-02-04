@@ -29,6 +29,38 @@ import urllib3
 from getpass import getpass
 from six import PY3
 
+import smtplib
+from email.message import EmailMessage
+
+def send_mail(to_email, subject, message, server='192.168.0.165',
+              from_email='gewaehrleistung@b-k-architekten.de'):
+    msg = EmailMessage()
+    msg['Subject'] = subject
+    msg['From'] = from_email
+    msg['To'] = to_email
+    msg.set_content(message)
+    server = smtplib.SMTP(server)
+    server.set_debuglevel(0)
+    server.send_message(msg)
+    server.quit()
+#    print('successfully sent the mail.')
+
+ 
+# Make a regular expression
+# for validating an Email
+regex = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+ 
+# Define a function for
+# for validating an Email
+def check_mail_adress(email):
+    # pass the regular expression
+    # and the string into the fullmatch() method
+    if(re.fullmatch(regex, email)):
+        return True
+    else:
+        return False
+
+
 def to_normal_str(text):
     if PY3 and text and not isinstance(text, str):
         text = text.decode('utf-8')
@@ -48,15 +80,15 @@ try:
 except NameError:
     unicode = str
 
-__version__ = "0.12.1"
-__author__ = "Tobias Brox"
-__author_short__ = "tobixen"
-__copyright__ = "Copyright 2013-2021, Tobias Brox and contributors"
-#__credits__ = []
+__version__ = "0.13.0"
+__author__ = "Andreas Bär"
+__author_short__ = "katerasrael"
+__copyright__ = "Copyright 2013-2021, Tobias Brox and contributors, 2022 Andreas Bär"
+__credits__ = "Tobias Brox (tobixen) for the original code"
 __license__ = "GPLv3+"
 __license_url__ = "http://www.gnu.org/licenses/gpl-3.0-standalone.html"
-__maintainer__ = "Tobias Brox"
-__author_email__ = "t-calendar-cli@tobixen.no"
+__maintainer__ = "Andreas Bär"
+__author_email__ = "asbaer@asrael.franken.de"
 __status__ = "Development"
 __product__ = "calendar-cli"
 __description__ = "high-level cli against caldav servers"
@@ -705,12 +737,33 @@ def calendar_agenda(caldav_conn, args):
                 if hasattr(event['instance'], summary_attr):
                     event['summary'] = getattr(event['instance'], summary_attr).value
                     break
+                  
             event['uid'] = event['instance'].uid.value if hasattr(event['instance'], 'uid') else '<no uid>'
             ## TODO: this will probably break and is probably moot on python3?
             for attr in vcal_txt_one + ['summary']:
                 if isinstance(event[attr], unicode):
                     event[attr] = to_normal_str(event[attr])
             print(args.event_template.format(**event))
+
+            # if the agenda-send-mails flag is set
+            # send mail as a notofication to the adresses found in the description-field
+            #
+            # caution:
+            # each adress gets a seperate mail
+            #
+            if args.agenda_send_mails:
+                if hasattr(event['instance'], 'description'):
+                    event['description'] = getattr(event['instance'], 'description').value
+                    desc_attrs = getattr(event['instance'], 'description').value
+                    for d1 in desc_attrs.rsplit():
+                        if check_mail_adress(d1):
+                            if args.verbose:
+                                print("send email-notofication to " + d1)
+                            send_mail(to_email=d1, subject=event['summary'], message=event['dtstart'] + ' ' + event['summary'] + os.linesep + os.linesep + event['description'])
+                        else:
+                            if args.verbose:
+                                print("no valid adress: " + d1)
+
 
 def create_calendar(caldav_conn, args):
     cal_obj = caldav.Principal(caldav_conn).make_calendar(cal_id=args.cal_id)
@@ -1107,9 +1160,12 @@ def main():
     calendar_agenda_parser.add_argument('--from-time', help="Fetch calendar events from this timestamp.  See the documentation for time specifications.  Defaults to now")
     calendar_agenda_parser.add_argument('--to-time', help="Fetch calendar until this timestamp")
     calendar_agenda_parser.add_argument('--agenda-mins', help="Fetch calendar for so many minutes", type=int)
-    calendar_agenda_parser.add_argument('--agenda-days', help="Fetch calendar for so many days", type=int, default=7)
+    calendar_agenda_parser.add_argument('--agenda-days', help="Fetch calendar for so many days", type=int, default=30)
     calendar_agenda_parser.add_argument('--event-template', help="Template for printing out the event. Defaults to '{dtstart} {summary}'", default="{dtstart} {summary}")
     calendar_agenda_parser.add_argument('--timestamp-format', help="strftime-style format string for the output timestamps", default="%Y-%m-%d %H:%M (%a)")
+    calendar_agenda_parser.add_argument('--agenda-verbose', help="Be verbose displaying the events", action='store_true', default=False)
+    calendar_agenda_parser.add_argument('--agenda-send-mails', help="Send emails to adresses listed in the description-fields", action='store_true', default=False)
+    calendar_agenda_parser.add_argument('--verbose', help="Be verbose, print whole event", action='store_true', default=False)
     calendar_agenda_parser.set_defaults(func=calendar_agenda)
 
     calendar_delete_parser = calendar_subparsers.add_parser('delete')
